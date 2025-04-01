@@ -1,0 +1,444 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import random, time
+
+# =============================================================================
+# TreeNode Class
+# =============================================================================
+class TreeNode:
+    def __init__(self, state, move=None):
+        self.state = state      # A tuple: (current_player, score1, score2, board)
+        self.move = move        # The move that led to this state (None for root)
+        self.children = []      # List of child TreeNodes
+        self.value = None       # Evaluation value for this node
+
+# =============================================================================
+# Main Game Class: NumberGame
+# =============================================================================
+class NumberGame:
+    def __init__(self, master):
+        """Initialize the main window, game settings, and state variables."""
+        self.master = master
+        self.master.title("Number Game")
+        self.style = ttk.Style(); self.style.theme_use("clam")
+        self.game_mode = None             # "ai" for PvAI, "human" for PvP
+        self.start_player = "human"       # For both modes: "human" means player1, "computer" means player2
+        self.algo_choice = "Minimax"      # Only used in AI mode ("Minimax" or "AlphaBeta")
+        self.current_player = 1           # Will be set later based on settings
+        self.scores = {1: 0, 2: 0}         # Player scores (player1 and player2)
+        self.number_list = []             # The board (list of numbers)
+        self.last_move = "None"           # Last move description
+        self.setup_home_screen()          # Show home screen
+
+    # ---------------- Home Screen and Mode Selection --------------------------
+    def setup_home_screen(self):
+        """Display the home screen with buttons for mode selection, rules, and about."""
+        self.home_frame = ttk.Frame(self.master, padding=20)
+        self.home_frame.grid(sticky="nsew")
+        self.master.columnconfigure(0, weight=1); self.master.rowconfigure(0, weight=1)
+        ttk.Label(self.home_frame, text="Welcome to the Number Game!",
+                  font=("Arial", 18, "bold")).grid(row=0, column=0, columnspan=4, pady=10)
+        ttk.Label(self.home_frame, text="Choose a game mode:", font=("Arial", 14)
+                  ).grid(row=1, column=0, columnspan=4, pady=10)
+        ttk.Button(self.home_frame, text="Play vs AI", command=lambda: self.select_mode("ai")
+                  ).grid(row=2, column=0, padx=10, pady=10)
+        ttk.Button(self.home_frame, text="Play vs Player", command=lambda: self.select_mode("human")
+                  ).grid(row=2, column=1, padx=10, pady=10)
+        ttk.Button(self.home_frame, text="Rules", command=self.open_rules_window
+                  ).grid(row=2, column=2, padx=10, pady=10)
+        ttk.Button(self.home_frame, text="About Developers", command=self.open_about_window
+                  ).grid(row=2, column=3, padx=10, pady=10)
+
+    def select_mode(self, mode):
+        """Set game mode and move to the settings screen."""
+        self.game_mode = mode
+        self.home_frame.destroy()
+        self.setup_start_frame()
+
+    def open_rules_window(self):
+        """Open a pop-up window displaying game rules."""
+        RulesWindow(self.master, self)
+
+    def open_about_window(self):
+        """Open a pop-up window displaying developer credits."""
+        AboutWindow(self.master, self)
+
+    # ---------------- Settings Screen (Start Frame) ---------------------------
+    def setup_start_frame(self):
+        """
+        Display a settings screen for board length, who starts,
+        and (in AI mode) algorithm selection.
+        In PvP mode, the "Who starts:" options are labeled "1st Player" and "2nd Player".
+        In AI mode, they are labeled "Human" and "Computer", plus algorithm options.
+        """
+        self.start_frame = ttk.Frame(self.master, padding=20)
+        self.start_frame.grid(sticky="nsew")
+        self.master.columnconfigure(0, weight=1); self.master.rowconfigure(0, weight=1)
+        ttk.Label(self.start_frame, text="Enter length of number string (15 to 20):",
+                  font=("Arial", 14)).grid(row=0, column=0, columnspan=2, pady=10)
+        self.length_entry = ttk.Entry(self.start_frame, font=("Arial", 14), width=10)
+        self.length_entry.grid(row=1, column=0, pady=10)
+        ttk.Label(self.start_frame, text="Who starts:", font=("Arial", 12)
+                  ).grid(row=2, column=0, pady=5, sticky="w")
+        self.rb_frame = ttk.Frame(self.start_frame)
+        self.rb_frame.grid(row=2, column=1, pady=5, sticky="w")
+        self.start_player_var = tk.StringVar(value="human")
+        if self.game_mode == "human":
+            ttk.Radiobutton(self.rb_frame, text="1st Player", variable=self.start_player_var, value="human").pack(side="left")
+            ttk.Radiobutton(self.rb_frame, text="2nd Player", variable=self.start_player_var, value="computer").pack(side="left")
+        else:
+            ttk.Radiobutton(self.rb_frame, text="Human", variable=self.start_player_var, value="human").pack(side="left")
+            ttk.Radiobutton(self.rb_frame, text="Computer", variable=self.start_player_var, value="computer").pack(side="left")
+            self.algo_label = ttk.Label(self.start_frame, text="AI Algorithm:", font=("Arial", 12))
+            self.algo_label.grid(row=3, column=0, pady=5, sticky="w")
+            self.algo_frame = ttk.Frame(self.start_frame)
+            self.algo_frame.grid(row=3, column=1, pady=5, sticky="w")
+            self.algo_choice_var = tk.StringVar(value="Minimax")
+            ttk.Radiobutton(self.algo_frame, text="Minimax", variable=self.algo_choice_var, value="Minimax").pack(side="left")
+            ttk.Radiobutton(self.algo_frame, text="Alpha-Beta", variable=self.algo_choice_var, value="AlphaBeta").pack(side="left")
+        ttk.Button(self.start_frame, text="Start Game", command=self.start_game
+                  ).grid(row=4, column=0, columnspan=2, padx=10, pady=10)
+
+    def start_game(self):
+        """
+        Validate input, generate the board, and set starting player and algorithm.
+        Then, transition to the main game screen.
+        If in AI mode and computer starts, trigger an immediate AI move.
+        """
+        try:
+            length = int(self.length_entry.get())
+            if length < 15 or length > 20:
+                messagebox.showerror("Invalid Input", "Enter a number between 15 and 20.")
+                return
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Enter a valid integer.")
+            return
+        self.length = length
+        self.generate_number_string()
+        chosen = self.start_player_var.get()
+        self.current_player = 2 if chosen == "computer" else 1
+        if self.game_mode == "ai":
+            self.algo_choice = self.algo_choice_var.get()
+        else:
+            self.algo_choice = None
+        self.start_frame.destroy()
+        self.setup_game_frame()
+        if self.game_mode == "ai" and self.current_player == 2:
+            self.master.after(500, self.ai_move)
+
+    def generate_number_string(self):
+        """Generate a random board (list of numbers) using only 1–4 (ensuring one of each)."""
+        board = [1, 2, 3, 4] + [random.choice([1, 2, 3, 4]) for _ in range(self.length - 4)]
+        random.shuffle(board)
+        self.number_list = board
+
+    # ---------------- Main Game Screen ------------------------------------------
+    def setup_game_frame(self):
+        """
+        Set up the main game UI:
+          - Turn indicator, last move, score display, and board (buttons).
+        """
+        self.game_frame = ttk.Frame(self.master, padding=20)
+        self.game_frame.grid(sticky="nsew")
+        self.turn_label = ttk.Label(self.game_frame, text=f"Player {self.current_player}'s Turn",
+                                    font=("Arial", 16, "bold"))
+        self.turn_label.grid(row=0, column=0, columnspan=2, pady=10)
+        self.last_move_label = ttk.Label(self.game_frame, text=f"Last Move: {self.last_move}",
+                                         font=("Arial", 12, "italic"))
+        self.last_move_label.grid(row=1, column=0, columnspan=2, pady=5)
+        self.score_label = ttk.Label(self.game_frame, text=f"Scores - Player 1: {self.scores[1]}    Player 2: {self.scores[2]}",
+                                     font=("Arial", 14))
+        self.score_label.grid(row=2, column=0, columnspan=2, pady=10)
+        self.numbers_frame = ttk.Frame(self.game_frame)
+        self.numbers_frame.grid(row=3, column=0, columnspan=2, pady=20)
+        self.update_numbers_display()
+
+    def update_numbers_display(self):
+        """Refresh the board by re-creating a button for each number."""
+        for widget in self.numbers_frame.winfo_children():
+            widget.destroy()
+        cols = 10 if len(self.number_list) > 10 else len(self.number_list)
+        for idx, num in enumerate(self.number_list):
+            r, c = idx // cols, idx % cols
+            ttk.Button(self.numbers_frame, text=str(num),
+                       command=lambda i=idx: self.number_clicked(i), width=4
+                      ).grid(row=r, column=c, padx=5, pady=5)
+
+    # ---------------- Player Moves ----------------------------------------------
+    def number_clicked(self, idx):
+        """
+        Process a human player's click.
+        For 2 and 4, ask if the special move should be applied; otherwise, perform 'take'.
+        Ignore clicks if it's AI's turn.
+        """
+        if self.game_mode == "ai" and self.current_player == 2:
+            return
+        selected = self.number_list[idx]
+        if selected == 2:
+            ans = messagebox.askquestion("Choose Move", "Divide 2 into two 1's? (No to take it)")
+            self.divide_two(idx) if ans == 'yes' else self.take_number(idx)
+        elif selected == 4:
+            ans = messagebox.askquestion("Choose Move", "Split 4 into two 2's? (No to take it)")
+            self.split_four(idx) if ans == 'yes' else self.take_number(idx)
+        else:
+            self.take_number(idx)
+
+    def take_number(self, idx):
+        """Perform the 'take' move: remove number, update score, and refresh state."""
+        num = self.number_list.pop(idx)
+        self.last_move = f"Player {self.current_player} took {num}"
+        self.scores[self.current_player] += num
+        self.update_game_state()
+
+    def divide_two(self, idx):
+        """For a 2, remove it, add two 1's, and give opponent +1 point."""
+        self.number_list.pop(idx)
+        self.number_list.extend([1, 1])
+        self.last_move = f"Player {self.current_player} divided 2 into two 1's (opponent +1)"
+        opp = 2 if self.current_player == 1 else 1
+        self.scores[opp] += 1
+        self.update_game_state()
+
+    def split_four(self, idx):
+        """For a 4, remove it, add two 2's, and subtract 1 point from opponent."""
+        self.number_list.pop(idx)
+        self.number_list.extend([2, 2])
+        self.last_move = f"Player {self.current_player} split 4 into two 2's (opponent -1)"
+        opp = 2 if self.current_player == 1 else 1
+        self.scores[opp] -= 1
+        self.update_game_state()
+
+    def update_game_state(self):
+        """Update the UI, check for game over, and switch turns (trigger AI move if needed)."""
+        self.update_numbers_display()
+        self.score_label.config(text=f"Scores - Player 1: {self.scores[1]}    Player 2: {self.scores[2]}")
+        self.last_move_label.config(text=f"Last Move: {self.last_move}")
+        if not self.number_list:
+            self.end_game()
+        else:
+            self.current_player = 2 if self.current_player == 1 else 1
+            self.turn_label.config(text=f"Player {self.current_player}'s Turn")
+            if self.game_mode == "ai" and self.current_player == 2:
+                self.master.after(500, self.ai_move)
+
+    # ---------------- AI: Game Tree, Minimax, and Alpha-Beta --------------------
+    def generate_moves(self, state):
+        """Return a list of legal moves for the given state."""
+        p, s1, s2, board = state
+        moves = []
+        for i, num in enumerate(board):
+            if num in [1, 3]:
+                moves.append((i, "take"))
+            elif num == 2:
+                moves += [(i, "take"), (i, "divide")]
+            elif num == 4:
+                moves += [(i, "take"), (i, "split")]
+        return moves
+
+    def apply_move(self, state, move):
+        """Return a new state resulting from applying the given move."""
+        p, s1, s2, board = state
+        new_board = board.copy()
+        num = new_board.pop(move[0])
+        if move[1] == "take":
+            s1_new, s2_new = (s1 + num, s2) if p == 1 else (s1, s2 + num)
+        elif move[1] == "divide":
+            new_board.extend([1, 1])
+            s1_new, s2_new = (s1, s2 + 1) if p == 1 else (s1 + 1, s2)
+        elif move[1] == "split":
+            new_board.extend([2, 2])
+            s1_new, s2_new = (s1, s2 - 1) if p == 1 else (s1 - 1, s2)
+        return (2 if p == 1 else 1, s1_new, s2_new, new_board)
+
+    def minimax(self, state, depth, maximizing):
+        """
+        Recursively perform minimax search to given depth.
+        Returns (value, best_move, tree_node) with evaluation = (s2 - s1).
+        """
+        node = TreeNode(state)
+        self.total_nodes += 1
+        p, s1, s2, board = state
+        if depth == 0 or not board:
+            node.value = s2 - s1
+            return node.value, None, node
+        moves = self.generate_moves(state)
+        if not moves:
+            node.value = s2 - s1
+            return node.value, None, node
+        if maximizing:
+            best_val, best_move = -float('inf'), None
+            for m in moves:
+                val, _, child = self.minimax(self.apply_move(state, m), depth - 1, False)
+                node.children.append(child)
+                if val > best_val:
+                    best_val, best_move = val, m
+            node.value = best_val
+            return best_val, best_move, node
+        else:
+            best_val, best_move = float('inf'), None
+            for m in moves:
+                val, _, child = self.minimax(self.apply_move(state, m), depth - 1, True)
+                node.children.append(child)
+                if val < best_val:
+                    best_val, best_move = val, m
+            node.value = best_val
+            return best_val, best_move, node
+
+    def alphabeta(self, state, depth, alpha, beta, maximizing):
+        """
+        Perform alpha-beta pruning search to given depth.
+        Returns (value, best_move, tree_node).
+        """
+        node = TreeNode(state)
+        self.total_nodes += 1
+        p, s1, s2, board = state
+        if depth == 0 or not board:
+            node.value = s2 - s1
+            return node.value, None, node
+        moves = self.generate_moves(state)
+        if not moves:
+            node.value = s2 - s1
+            return node.value, None, node
+        if maximizing:
+            best_val, best_move = -float('inf'), None
+            for m in moves:
+                val, _, child = self.alphabeta(self.apply_move(state, m), depth - 1, alpha, beta, False)
+                node.children.append(child)
+                if val > best_val:
+                    best_val, best_move = val, m
+                alpha = max(alpha, best_val)
+                if beta <= alpha:
+                    break
+            node.value = best_val
+            return best_val, best_move, node
+        else:
+            best_val, best_move = float('inf'), None
+            for m in moves:
+                val, _, child = self.alphabeta(self.apply_move(state, m), depth - 1, alpha, beta, True)
+                node.children.append(child)
+                if val < best_val:
+                    best_val, best_move = val, m
+                beta = min(beta, best_val)
+                if beta <= alpha:
+                    break
+            node.value = best_val
+            return best_val, best_move, node
+
+    def ai_move(self):
+        """
+        When it's the AI's turn, use the selected algorithm (Minimax or Alpha-Beta)
+        with a lookahead depth of 3 to compute the best move.
+        Record the move time and node visits, then execute the move.
+        """
+        state = (self.current_player, self.scores[1], self.scores[2], self.number_list.copy())
+        search_depth = 3
+        self.total_nodes = 0  # Reset counter
+        start_time = time.time()
+        if self.algo_choice == "Minimax":
+            _, best_move, _ = self.minimax(state, search_depth, True)
+        else:
+            _, best_move, _ = self.alphabeta(state, search_depth, -float('inf'), float('inf'), True)
+        move_time = time.time() - start_time
+        # (Metrics could be logged here if needed.)
+        if best_move is None:
+            return
+        if best_move[1] == "take":
+            self.take_number(best_move[0])
+        elif best_move[1] == "divide":
+            self.divide_two(best_move[0])
+        elif best_move[1] == "split":
+            self.split_four(best_move[0])
+
+    # ---------------- End Game and Restart --------------------------------------
+    def end_game(self):
+        """
+        Determine the winner when the board is empty, display final scores,
+        and ask the user if they want to play again.
+        """
+        if self.scores[1] > self.scores[2]:
+            result = "Player 1 wins!"
+        elif self.scores[2] > self.scores[1]:
+            result = "Player 2 wins!"
+        else:
+            result = "It's a draw!"
+        play_again = messagebox.askyesno("Game Over",
+            f"Game Over!\n\nFinal Scores:\nPlayer 1: {self.scores[1]}\nPlayer 2: {self.scores[2]}\n\n{result}\n\nPlay again?")
+        if play_again:
+            self.restart_game()
+        else:
+            self.master.destroy()
+
+    def restart_game(self):
+        """Reset game state and return to the home screen."""
+        self.current_player = 1
+        self.scores = {1: 0, 2: 0}
+        self.number_list = []
+        self.last_move = "None"
+        self.game_frame.destroy()
+        self.setup_home_screen()
+
+# =============================================================================
+# Additional Windows: RulesWindow and AboutWindow
+# =============================================================================
+class RulesWindow:
+    def __init__(self, master, main_app):
+        """Create a pop-up window displaying the game rules."""
+        self.window = tk.Toplevel(master)
+        self.window.title("Game Rules")
+        rules_text = (
+            "Objective:\n"
+            "Score the highest points by selecting numbers from a shared number list.\n\n"
+            "Numbers:\n"
+            "The list contains digits 1 to 4. Each player takes turns picking one.\n\n"
+            "Special Moves:\n"
+            "- Pick 2:\n"
+            "   • Take = +2 points\n"
+            "   • Divide = two 1s (opponent +1)\n"
+            "- Pick 4:\n"
+            "   • Take = +4 points\n"
+            "   • Split = two 2s (opponent -1)\n\n"
+            "Modes:\n"
+            "- Player vs AI\n"
+            "- Player vs Player\n\n"
+            "Game ends when all numbers are taken."
+        )
+        tk.Label(self.window, text=rules_text, font=("Arial", 12),
+                 justify="left", wraplength=480).pack(padx=10, pady=10)
+        ttk.Button(ttk.Frame(self.window), text="Back to Menu",
+                   command=lambda: self.back_to_menu(main_app)).pack(pady=10)
+
+    def back_to_menu(self, app):
+        """Close this window and return to the main menu."""
+        self.window.destroy()
+        app.setup_home_screen()
+
+class AboutWindow:
+    def __init__(self, master, main_app):
+        """Create a pop-up window displaying developer credits."""
+        self.window = tk.Toplevel(master)
+        self.window.title("About the Developers")
+        about_text = (
+            "First Practical Assignment:\n\n"
+            "- Student 1 – Antoine PERICHON\n"
+            "- Student 2 – Anton YUKSIN\n"
+            "- Student 3 – Ahmet Yasar OZTURK\n"
+            "- Student 4 – Ammar HAMOUDA\n"
+            "- Student 5 – Chanka MATARA ARACHCHI\n"
+        )
+        tk.Label(self.window, text=about_text, font=("Arial", 12),
+                 justify="left", wraplength=480).pack(padx=10, pady=10)
+        ttk.Button(ttk.Frame(self.window), text="Back to Menu",
+                   command=lambda: self.back_to_menu(main_app)).pack(pady=10)
+
+    def back_to_menu(self, app):
+        """Close this window and return to the main menu."""
+        self.window.destroy()
+        app.setup_home_screen()
+
+# =============================================================================
+# Run the Application
+# =============================================================================
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = NumberGame(root)
+    root.mainloop()
